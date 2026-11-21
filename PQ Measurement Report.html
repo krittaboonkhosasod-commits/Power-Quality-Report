@@ -151,6 +151,10 @@ function ensureSlot(n){if($('s'+n))return;const h=document.createElement('div');
   h.innerHTML=`<b>${nm(n)}</b><span class="st" id="s${n}"></span><span class="acts"><button class="sec" data-n="${n}">Replace file</button><button class="sec rm" data-rm="${n}" aria-label="Remove ${nm(n)}">Remove</button></span>`;
   const box=$('slots'),nx=[...box.children].find(x=>+x.dataset.k>+n);box.insertBefore(h,nx||null)}
 function setS(n,t,c){ensureSlot(n);const e=$('s'+n);e.textContent=t;e.className='st '+(c||'')}
+// Column-name aliases: different Fluke/Chauvin Arnoux firmware/exports name the same quantity differently
+// (V1-N rms = V1 rms, Hz = F, Vφ-N unb (u2) = Vunb (u2), V1-N H5 = V1 H5, ...). First existing candidate wins.
+const ALIAS={'Hz':'F','Vφ-N unb (u2)':'Vunb (u2)'};
+const resolveCol=(h,c)=>[c,ALIAS[c],c.replace(/^V(\d)-N/,'V$1'),c==='NT (var)'?'QT (var)':null].find(x=>x&&x in h);
 async function load(n,file){
   ensureSlot(n);
   setS(n,'Reading '+file.name+' …');await tick();
@@ -160,7 +164,7 @@ async function load(n,file){
     const get=re=>{const rows=raw(re);if(!rows)return null;const hi=rows.findIndex(r=>r[0]==='Date:');if(hi<0)return null;
       const h={};rows[hi].forEach((v,i)=>{if(v!=null&&!(v in h))h[v]=i});
       const dr=rows.slice(hi+1).filter(r=>/\d+\/\d+\/\d+|\d+-[A-Za-z]{3}-\d+/.test(String(r[0])));
-      return{dr,col:c=>c in h?dr.map(r=>typeof r[h[c]]==='number'?r[h[c]]:NaN):null}};
+      return{dr,col:c=>{const k=resolveCol(h,c);return k?dr.map(r=>typeof r[h[k]]==='number'?r[h[k]]:NaN):null}}};
     const rec=get(/^Recording$/i); if(!rec||!rec.dr.length)throw new Error('Recording sheet with data not found');
     const m={};const cf=raw(/^Config Info$/i)||[];
     cf.forEach((r,i)=>{if(r[1]==='Instrument serial number'){m.model=r[0];m.serial=r[2]}
@@ -169,7 +173,7 @@ async function load(n,file){
         else if(q){let y=+q[3];if(y<100)y+=2000;if(y>2400)y-=543;m.date=`${+q[1]} ${MON[['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(q[2].toLowerCase())]} ${y}`}
         m.t0=x[1];m.t1=x[3]}
       ['Electrical hook-up','Aggregation','Current ratio','Voltage ratio phase to neutral'].forEach(k=>{if(r[0]===k)m[k]=r[1]})});
-    D[n]={n,file:file.name,m,rec:rec.col,ah:(get(/^A H Harmonic RMS$/i)||{}).col,vh:(get(/^V\S* N H Harmonic %$/i)||{}).col,times:rec.dr.map(r=>r[1]),N:rec.dr.length};
+    D[n]={n,file:file.name,m,rec:rec.col,ah:(get(/^A H Harmonic RMS$/i)||{}).col,vh:(get(/^V(?:\S* N)? H Harmonic %$/i)||{}).col,times:rec.dr.map(r=>r[1]),N:rec.dr.length};
     setS(n,`Loaded · ${rec.dr.length} samples · ${m.t0||'?'}–${m.t1||'?'}`,'ok');
   }catch(e){delete D[n];setS(n,'Error: '+e.message,'er')}
 }
@@ -217,7 +221,7 @@ function trend(l,ex){const I=ids(),sr=I.map(n=>{const r=D[n].rows.find(x=>x.l===
   const ds=I.map((n,i)=>sr[i]&&{label:nm(n),data:sr[i].map(x=>Number.isFinite(x)?x:null),borderColor:COL[i%COL.length],spanGaps:false}).filter(Boolean);
   const u=(P.find(p=>p[1]===l)||[])[2]||'';return mk('line','Trend: '+l+(u?' ('+u+')':''),[...Array(L)].map((_,i)=>i),ds,{x:'Sample (minute)',y:u,...ex})}
 function harm(n,ex){const d=D[n],ph=['A1','A2','A3'];const ds=ph.map((q,i)=>({type:'bar',label:q,backgroundColor:phc(q,COL[i]),data:ORD.map(h=>{const x=d.hc.find(y=>y.q===q&&y.h===h);return x?x.s[2]:null})}));
-  ds.push({type:'line',label:'Limit PRC-PQG-01/1998',borderColor:'#a8322b',borderDash:[5,4],pointRadius:0,stepped:true,data:ORD.map(h=>LI[h]??null)});
+  ds.push({type:'line',label:'Limit PRC-PQG-01/1998',borderColor:'#a8322b',borderDash:[5,4],pointRadius:0,stepped:'middle',data:ORD.map(h=>LI[h]??null)});
   return mk('bar',`${nm(n)} current harmonics: maximum (A)`,ORD.map(h=>'H'+h),ds,{y:'A',x:'Harmonic order',...ex})}
 let live={};function draw(id,cfg){if(live[id])live[id].destroy();live[id]=cfg?new Chart($(id),cfg):null}
 
